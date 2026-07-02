@@ -97,6 +97,7 @@ model Pet {
 
   appointments Appointment[]
   petHotels    PetHotel[]
+  weightHistory WeightHistory[]
 
   @@index([customerId])
   @@map("pets")
@@ -128,14 +129,92 @@ model MedicalRecord {
   appointmentId String      @unique @map("appointment_id")
   appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
   vitalSign     String?     @map("vital_sign")
+  temperature   Float?
+  heartRate     Int?
+  respiration   Int?
   diagnosis     String?
   treatment     String?
   prescription  String?
   notes         String?
   createdAt     DateTime    @default(now()) @map("created_at")
   updatedAt     DateTime    @updatedAt @map("updated_at")
+  medicalRecordTreatments MedicalRecordTreatment[]
+  recordMedicines         MedicalRecordMedicine[]
+  medicalRecordVaccines   MedicalRecordVaccine[]
 
   @@map("medical_records")
+}
+
+model Medicine {
+  id        String  @id @default(cuid())
+  name      String
+  sku       String? @unique
+  stock     Int     @default(0)
+  price     Int
+  isActive  Boolean @default(true) @map("is_active")
+
+  recordMedicines MedicalRecordMedicine[]
+
+  @@map("medicines")
+}
+
+model MedicalRecordTreatment {
+  id              String   @id @default(cuid())
+  medicalRecordId String   @map("medical_record_id")
+  medicalRecord   MedicalRecord @relation(fields: [medicalRecordId], references: [id], onDelete: Cascade)
+  serviceId       String   @map("service_id")
+  service         Service  @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+  quantity        Int
+  price           Int
+  notes           String?
+  subtotal        Int
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([medicalRecordId])
+  @@map("medical_record_treatments")
+}
+
+model MedicalRecordMedicine {
+  id              String   @id @default(cuid())
+  medicalRecordId String   @map("medical_record_id")
+  medicalRecord   MedicalRecord @relation(fields: [medicalRecordId], references: [id], onDelete: Cascade)
+  medicineId      String   @map("medicine_id")
+  medicine        Medicine @relation(fields: [medicineId], references: [id], onDelete: Restrict)
+  quantity        Int
+  dosage          String?
+  instruction     String?
+  price           Int
+  subtotal        Int
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([medicalRecordId])
+  @@map("medical_record_medicines")
+}
+
+model MedicalRecordVaccine {
+  id              String   @id @default(cuid())
+  medicalRecordId String   @map("medical_record_id")
+  medicalRecord   MedicalRecord @relation(fields: [medicalRecordId], references: [id], onDelete: Cascade)
+  vaccine         String
+  batch           String?
+  expired         DateTime?
+  nextSchedule    DateTime? @map("next_schedule")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  @@index([medicalRecordId])
+  @@map("medical_record_vaccines")
+}
+
+model WeightHistory {
+  id        String   @id @default(cuid())
+  petId     String   @map("pet_id")
+  pet       Pet      @relation(fields: [petId], references: [id], onDelete: Cascade)
+  weight    Float
+  height    Float?
+  recordedAt DateTime @default(now()) @map("recorded_at")
+
+  @@index([petId])
+  @@map("weight_history")
 }
 
 model HotelRoom {
@@ -179,6 +258,7 @@ model Service {
   isActive Boolean @default(true) @map("is_active")
 
   invoiceItems InvoiceItem[]
+  medicalRecordTreatments MedicalRecordTreatment[]
 
   @@map("services")
 }

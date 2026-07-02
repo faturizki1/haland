@@ -6,4 +6,9 @@ export const serviceSchema = z.object({
   category: z.string().trim().min(2).max(100),
 });
 
+export const updateServiceSchema = serviceSchema.extend({
+  id: z.string().trim().min(1),
+});
+
 export type ServiceInput = z.infer<typeof serviceSchema>;
+export type UpdateServiceInput = z.infer<typeof updateServiceSchema>;
