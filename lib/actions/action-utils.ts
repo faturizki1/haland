@@ -1,3 +1,4 @@
+import { ZodError } from "zod";
 import { ActionError } from "./action-error";
 import { fail, ok, type ActionResult } from "./action-result";
 
@@ -10,7 +11,17 @@ export function toActionError(error: unknown): ActionError {
     return error;
   }
 
+  if (error instanceof ZodError) {
+    const firstIssue = error.issues[0];
+    const message = firstIssue ? firstIssue.message : "Data tidak valid";
+    return new ActionError("VALIDATION_ERROR", message, 400);
+  }
+
   if (error instanceof Error) {
+    if (error.message === "UNAUTHORIZED") {
+      return new ActionError("UNAUTHORIZED", "Anda tidak memiliki akses untuk aksi ini", 401);
+    }
+
     return new ActionError("INTERNAL_ERROR", error.message, 500);
   }
 

@@ -5,21 +5,18 @@ import { revalidatePath } from "next/cache";
 import { createActionError } from "./action-error";
 import { type ActionResult } from "./action-result";
 import { wrapAction } from "./action-utils";
-import { requireRole } from "@/lib/auth-guard";
+import { requireOwner } from "@/lib/auth-guard";
 import { prisma } from "@/lib/prisma";
+import type { Role } from "@prisma/client";
 import { createUserSchema, updateUserSchema, resetPinSchema } from "@/lib/validations/user";
+import { PAGINATION_CONSTANTS } from "@/lib/constants/pagination";
 
 export async function createUser(input: unknown): Promise<ActionResult<{ id: string }>> {
   return wrapAction(async () => {
-    const session = await requireRole(["OWNER", "ADMIN"]);
-
-    if (session.user.role === "ADMIN") {
-      throw createActionError("FORBIDDEN", "Admin tidak dapat membuat akun Owner atau Admin", 403);
-    }
-
+    await requireOwner();
     const parsed = createUserSchema.parse(input);
 
-    const existing = await prisma.user.findUnique({ where: { username: parsed.username } });
+    const existing = await prisma.user.findUnique({ where: { username: parsed.username }, select: { id: true } });
     if (existing) {
       throw createActionError("CONFLICT", "Username sudah digunakan", 409);
     }
@@ -52,16 +49,16 @@ export async function createUser(input: unknown): Promise<ActionResult<{ id: str
 
 export async function updateUser(input: unknown): Promise<ActionResult<{ id: string }>> {
   return wrapAction(async () => {
-    const session = await requireRole(["OWNER", "ADMIN"]);
+    await requireOwner();
     const parsed = updateUserSchema.parse(input);
 
-    const current = await prisma.user.findUnique({ where: { id: parsed.id } });
+    const current = await prisma.user.findUnique({ where: { id: parsed.id }, select: { role: true } });
     if (!current) {
       throw createActionError("NOT_FOUND", "User tidak ditemukan", 404);
     }
 
-    if (session.user.role === "ADMIN" && current.role === "OWNER") {
-      throw createActionError("FORBIDDEN", "Admin tidak dapat mengubah akun Owner", 403);
+    if (current.role === "OWNER") {
+      throw createActionError("FORBIDDEN", "Owner tidak dapat diubah", 403);
     }
 
     const existing = await prisma.user.findFirst({
@@ -92,6 +89,8 @@ export async function updateUser(input: unknown): Promise<ActionResult<{ id: str
       } else {
         await prisma.customer.update({ where: { id: customer.id }, data: { address: parsed.address ?? null } });
       }
+    } else {
+      await prisma.customer.deleteMany({ where: { userId: updated.id } });
     }
 
     revalidatePath("/users");
@@ -101,19 +100,19 @@ export async function updateUser(input: unknown): Promise<ActionResult<{ id: str
 
 export async function disableUser(id: string, currentUserId?: string): Promise<ActionResult<{ id: string }>> {
   return wrapAction(async () => {
-    const session = await requireRole(["OWNER", "ADMIN"]);
+    const session = await requireOwner();
 
     if (currentUserId && currentUserId === session.user.id) {
       throw createActionError("FORBIDDEN", "Anda tidak dapat menonaktifkan akun sendiri", 403);
     }
 
-    const user = await prisma.user.findUnique({ where: { id } });
+    const user = await prisma.user.findUnique({ where: { id }, select: { role: true } });
     if (!user) {
       throw createActionError("NOT_FOUND", "User tidak ditemukan", 404);
     }
 
-    if (session.user.role === "ADMIN" && user.role === "OWNER") {
-      throw createActionError("FORBIDDEN", "Admin tidak dapat menonaktifkan akun Owner", 403);
+    if (user.role === "OWNER") {
+      throw createActionError("FORBIDDEN", "Owner tidak dapat dinonaktifkan", 403);
     }
 
     await prisma.user.update({ where: { id }, data: { isActive: false } });
@@ -124,9 +123,9 @@ export async function disableUser(id: string, currentUserId?: string): Promise<A
 
 export async function enableUser(id: string): Promise<ActionResult<{ id: string }>> {
   return wrapAction(async () => {
-    await requireRole(["OWNER", "ADMIN"]);
+    await requireOwner();
 
-    const user = await prisma.user.findUnique({ where: { id } });
+    const user = await prisma.user.findUnique({ where: { id }, select: { id: true } });
     if (!user) {
       throw createActionError("NOT_FOUND", "User tidak ditemukan", 404);
     }
@@ -139,10 +138,10 @@ export async function enableUser(id: string): Promise<ActionResult<{ id: string 
 
 export async function resetUserPin(id: string, newPin: string): Promise<ActionResult<{ id: string }>> {
   return wrapAction(async () => {
-    await requireRole(["OWNER", "ADMIN"]);
+    await requireOwner();
     const parsed = resetPinSchema.parse({ newPin });
 
-    const user = await prisma.user.findUnique({ where: { id } });
+    const user = await prisma.user.findUnique({ where: { id }, select: { id: true } });
     if (!user) {
       throw createActionError("NOT_FOUND", "User tidak ditemukan", 404);
     }
@@ -154,13 +153,55 @@ export async function resetUserPin(id: string, newPin: string): Promise<ActionRe
   });
 }
 
-export async function getUsers() {
+export async function getUsers(params?: { page?: number; limit?: number; search?: string }) {
   return wrapAction(async () => {
-    await requireRole(["OWNER", "ADMIN"]);
+    await requireOwner();
+
+    const page = params?.page ?? PAGINATION_CONSTANTS.DEFAULT_PAGE;
+    const limit = params?.limit ?? PAGINATION_CONSTANTS.DEFAULT_LIMIT;
+    const search = params?.search?.trim() ?? "";
+
+    const roleSearch = ((): Role | undefined => {
+      const upper = search.toUpperCase();
+      if (upper === "OWNER" || upper === "ADMIN" || upper === "DOKTER" || upper === "CUSTOMER") {
+        return upper as Role;
+      }
+      return undefined;
+    })();
+
+    const where = search
+      ? {
+          OR: [
+            { username: { contains: search, mode: "insensitive" } },
+            { name: { contains: search, mode: "insensitive" } },
+            ...(roleSearch ? [{ role: roleSearch }] : []),
+          ],
+        }
+      : {};
+
+    const total = await prisma.user.count({ where });
     const users = await prisma.user.findMany({
+      where,
       orderBy: { createdAt: "desc" },
-      include: { customer: true },
+      skip: (page - 1) * limit,
+      take: limit,
+      select: {
+        id: true,
+        username: true,
+        role: true,
+        name: true,
+        phone: true,
+        isActive: true,
+        createdAt: true,
+        customer: {
+          select: {
+            id: true,
+            address: true,
+          },
+        },
+      },
     });
-    return users;
+
+    return { users, total };
   });
 }
