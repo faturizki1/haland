@@ -1,0 +1,5 @@
+export const LOGIN_CONSTANTS = {
+  MAX_ATTEMPTS: 5,
+  LOCKOUT_MINUTES: 15,
+  DEFAULT_PIN_LENGTH: 6,
+} as const;
